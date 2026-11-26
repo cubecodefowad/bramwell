@@ -251,7 +251,7 @@ function composeEmail(enquiry: Enquiry) {
   const subject = `New enquiry — ${enquiry.service} — ${enquiry.name}`;
 
   const text = [
-    'New enquiry from bramwell.com',
+    'New enquiry from bramwell.top',
     '',
     `Name:     ${enquiry.name}`,
     `Email:    ${enquiry.email}`,

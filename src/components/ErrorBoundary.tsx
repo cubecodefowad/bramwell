@@ -42,10 +42,10 @@ export class ErrorBoundary extends Component<Props, State> {
               Return Home
             </a>
             <a
-              href="mailto:hello@bramwell.com"
+              href="mailto:hello@bramwell.top"
               className="label inline-flex items-center justify-between gap-6 border border-charcoal/25 px-6 py-4 text-charcoal transition-colors duration-300 hover:border-forest hover:bg-forest hover:text-ivory sm:justify-start"
             >
-              hello@bramwell.com
+              hello@bramwell.top
             </a>
           </div>
         </div>

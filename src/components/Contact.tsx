@@ -12,7 +12,7 @@ import {
 import { Reveal } from './Reveal';
 import { Turnstile } from './Turnstile';
 
-const CONTACT_EMAIL = 'hello@bramwell.com';
+const CONTACT_EMAIL = 'hello@bramwell.top';
 const ENDPOINT = import.meta.env.VITE_CONTACT_ENDPOINT || '/api/contact';
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY;
 

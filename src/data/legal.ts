@@ -1,4 +1,4 @@
-export const CONTACT_EMAIL = 'hello@bramwell.com';
+export const CONTACT_EMAIL = 'hello@bramwell.top';
 
 export const POSTAL_ADDRESS = ['600 1st Ave, Ste 330 PMB 92768', 'Seattle, WA 98104-2246'];
 

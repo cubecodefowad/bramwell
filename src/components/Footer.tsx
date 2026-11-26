@@ -61,10 +61,10 @@ export function Footer() {
             <ul className="mt-5 space-y-3 text-[0.925rem]">
               <li>
                 <a
-                  href="mailto:hello@bramwell.com"
+                  href="mailto:hello@bramwell.top"
                   className="underline decoration-brass/40 underline-offset-4 transition-colors duration-300 hover:text-brass"
                 >
-                  hello@bramwell.com
+                  hello@bramwell.top
                 </a>
               </li>
               <li>
