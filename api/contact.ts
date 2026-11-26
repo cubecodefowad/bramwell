@@ -7,6 +7,11 @@
  * identically: validate, throttle, then deliver through Resend with the API key
  * held in the server environment, never in the browser bundle.
  *
+ * Two emails go out per enquiry: the enquiry to the studio inbox, then a copy
+ * to the sender as a receipt. The copy is best effort — the enquiry is the
+ * message that matters, so a failed receipt never fails the submission; the
+ * response only reports whether the copy went out.
+ *
  * Environment (Vercel -> Settings -> Environment Variables), all optional:
  *   RESEND_API_KEY  (secret)  Resend API key. Required for delivery.
  *   CONTACT_TO      (var)     Inbox that receives enquiries. Default hello@bramwell.top
@@ -42,6 +47,7 @@ const FIELD_LIMITS = { name: 100, email: 254, company: 120, service: 80, message
 
 const DEFAULT_FROM = 'Bramwell Enquiries <enquiries@mail.bramwell.top>';
 const DEFAULT_TO = 'hello@bramwell.top';
+const POSTAL = ['600 1st Ave, Ste 330 PMB 92768', 'Seattle, WA 98104-2246'];
 
 /** Best-effort per-instance throttle. Vercel may run several instances. */
 const recentHits = new Map<string, { start: number; count: number }>();
@@ -103,8 +109,25 @@ function isRateLimited(key: string) {
   return record.count > RATE_LIMIT.max;
 }
 
+function stamp() {
+  return new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+}
+
+function row(label: string, value: string) {
+  return (
+    `<tr><td style="padding:6px 16px 6px 0;color:#6b6b6b;font:600 12px/1.4 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:.08em;vertical-align:top">${label}</td>` +
+    `<td style="padding:6px 0;color:#292b28;font:15px/1.6 Georgia,serif">${value}</td></tr>`
+  );
+}
+
+function quote(message: string) {
+  return `<div style="margin:24px 0 0;padding:20px;background:#f5f1e8;border-left:3px solid #b69a65">
+<p style="margin:0;color:#292b28;font:15px/1.7 Georgia,serif;white-space:pre-wrap">${escapeHtml(message)}</p>
+</div>`;
+}
+
 function composeEmail(enquiry: Enquiry) {
-  const received = new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  const received = stamp();
   const company = enquiry.company || '—';
   const subject = `New enquiry — ${enquiry.service} — ${enquiry.name}`;
 
@@ -124,10 +147,6 @@ function composeEmail(enquiry: Enquiry) {
     'Reply to this email to answer them directly.',
   ].join('\n');
 
-  const row = (label: string, value: string) =>
-    `<tr><td style="padding:6px 16px 6px 0;color:#6b6b6b;font:600 12px/1.4 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:.08em;vertical-align:top">${label}</td>` +
-    `<td style="padding:6px 0;color:#292b28;font:15px/1.6 Georgia,serif">${value}</td></tr>`;
-
   const html = `<!doctype html><html><body style="margin:0;background:#f5f1e8;padding:32px">
 <div style="max-width:600px;margin:0 auto;background:#ffffff;border-top:4px solid #19352d;padding:32px">
 <p style="margin:0 0 4px;color:#7c6435;font:600 11px/1.4 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:.18em">Bramwell</p>
@@ -139,10 +158,57 @@ ${row('Company', escapeHtml(company))}
 ${row('Service', escapeHtml(enquiry.service))}
 ${row('Received', received)}
 </table>
-<div style="margin:24px 0 0;padding:20px;background:#f5f1e8;border-left:3px solid #b69a65">
-<p style="margin:0;color:#292b28;font:15px/1.7 Georgia,serif;white-space:pre-wrap">${escapeHtml(enquiry.message)}</p>
-</div>
+${quote(enquiry.message)}
 <p style="margin:24px 0 0;color:#6b6b6b;font:13px/1.6 Helvetica,Arial,sans-serif">Reply to this email to answer them directly.</p>
+</div></body></html>`;
+
+  return { subject, text, html };
+}
+
+/** The receipt the enquirer keeps. No promises the studio has not made. */
+function composeAcknowledgement(enquiry: Enquiry) {
+  const firstName = enquiry.name.split(/\s+/)[0];
+  const company = enquiry.company || '—';
+  const sent = stamp();
+  const subject = 'We have your enquiry — Bramwell';
+
+  const text = [
+    `Thank you, ${firstName}. Your enquiry has reached us.`,
+    '',
+    'We will come back to you within two working days.',
+    '',
+    'For your records, this is what you sent:',
+    '',
+    `Service:  ${enquiry.service}`,
+    `Company:  ${company}`,
+    `Sent:     ${sent}`,
+    '',
+    enquiry.message,
+    '',
+    '—',
+    'Bramwell',
+    ...POSTAL,
+    '',
+    'Reply to this email if anything needs adding.',
+  ].join('\n');
+
+  const html = `<!doctype html><html><body style="margin:0;background:#f5f1e8;padding:32px">
+<div style="max-width:600px;margin:0 auto;background:#ffffff;border-top:4px solid #19352d;padding:32px">
+<p style="margin:0 0 4px;color:#7c6435;font:600 11px/1.4 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:.18em">Bramwell</p>
+<h1 style="margin:0 0 20px;color:#19352d;font:400 24px/1.25 Georgia,serif">Thank you, ${escapeHtml(
+    firstName,
+  )}.</h1>
+<p style="margin:0 0 20px;color:#292b28;font:16px/1.7 Georgia,serif">Your enquiry has reached us. We will come back to you within two working days.</p>
+<p style="margin:0;color:#6b6b6b;font:600 12px/1.4 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:.08em">A copy of what you sent</p>
+<table style="border-collapse:collapse;width:100%;margin-top:12px">
+${row('Service', escapeHtml(enquiry.service))}
+${row('Company', escapeHtml(company))}
+${row('Sent', sent)}
+</table>
+${quote(enquiry.message)}
+<p style="margin:28px 0 0;color:#292b28;font:15px/1.7 Georgia,serif">Bramwell<br />
+<span style="color:#6b6b6b;font:14px/1.7 Helvetica,Arial,sans-serif">${POSTAL.join('<br />')}</span></p>
+<p style="margin:20px 0 0;color:#6b6b6b;font:13px/1.6 Helvetica,Arial,sans-serif">Reply to this email if anything needs adding.</p>
 </div></body></html>`;
 
   return { subject, text, html };
@@ -159,6 +225,28 @@ function parseBody(body: unknown): Record<string, unknown> | null {
   }
   if (body && typeof body === 'object' && !Array.isArray(body)) return body as Record<string, unknown>;
   return null;
+}
+
+/** One Resend call. Failures are logged with Resend's own words, never echoed. */
+async function deliver(apiKey: string, message: Record<string, unknown>) {
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify(message),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      console.error('resend rejected', response.status, detail.slice(0, 500));
+      return { ok: false as const, status: response.status };
+    }
+
+    return { ok: true as const };
+  } catch (error) {
+    console.error('resend unreachable', error instanceof Error ? error.message : 'unknown');
+    return { ok: false as const, status: 0 };
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -190,7 +278,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Honeypot: accept and drop, so a bot gets no signal that it was caught.
   if (typeof payload.website === 'string' && payload.website.trim() !== '') {
-    send(res, 200, { ok: true });
+    send(res, 200, { ok: true, copySent: false });
     return;
   }
 
@@ -209,38 +297,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const { enquiry } = checked;
-  const { subject, text, html } = composeEmail(enquiry);
+  const from = process.env.CONTACT_FROM || DEFAULT_FROM;
+  const inbox = process.env.CONTACT_TO || DEFAULT_TO;
 
-  let delivery: Response;
-  try {
-    delivery = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: process.env.CONTACT_FROM || DEFAULT_FROM,
-        to: [process.env.CONTACT_TO || DEFAULT_TO],
-        reply_to: enquiry.email,
-        subject,
-        text,
-        html,
-      }),
-    });
-  } catch {
-    send(res, 502, { ok: false, error: 'delivery_failed' });
-    return;
-  }
+  const delivery = await deliver(apiKey, {
+    from,
+    to: [inbox],
+    reply_to: enquiry.email,
+    ...composeEmail(enquiry),
+  });
 
   if (!delivery.ok) {
-    // Log Resend's own explanation (it never contains the key) and tell the
-    // client only the upstream status, so nothing about the account leaks.
-    const detail = await delivery.text().catch(() => '');
-    console.error('resend rejected', delivery.status, detail.slice(0, 500));
-    send(res, 502, { ok: false, error: 'delivery_failed', upstream: delivery.status });
+    send(res, 502, {
+      ok: false,
+      error: 'delivery_failed',
+      ...(delivery.status ? { upstream: delivery.status } : {}),
+    });
     return;
   }
 
-  send(res, 200, { ok: true });
+  // The enquiry is safely delivered at this point; the receipt is a courtesy.
+  const copy = await deliver(apiKey, {
+    from,
+    to: [enquiry.email],
+    reply_to: inbox,
+    ...composeAcknowledgement(enquiry),
+  });
+
+  send(res, 200, { ok: true, copySent: copy.ok });
 }

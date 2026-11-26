@@ -10,7 +10,9 @@ export type FieldErrors = Partial<Record<keyof Enquiry, string>>;
 
 export type SubmitFailure = 'unconfigured' | 'network' | 'rejected' | 'busy';
 
-export type SubmitResult = { ok: true } | { ok: false; reason: SubmitFailure };
+export type SubmitResult =
+  | { ok: true; copySent: boolean }
+  | { ok: false; reason: SubmitFailure };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
@@ -48,7 +50,9 @@ export function validate(values: Enquiry): FieldErrors {
 /**
  * Post the enquiry to the endpoint and report what actually happened.
  * The endpoint answers with JSON, so a refusal can be told apart from a
- * dropped connection or an unconfigured backend.
+ * dropped connection or an unconfigured backend. `copySent` says whether the
+ * receipt reached the enquirer's address, so the page never promises one it
+ * does not know about.
  */
 export async function sendEnquiry(values: Enquiry, endpoint: string | undefined): Promise<SubmitResult> {
   if (!endpoint) return { ok: false, reason: 'unconfigured' };
@@ -75,7 +79,11 @@ export async function sendEnquiry(values: Enquiry, endpoint: string | undefined)
     return { ok: false, reason: 'network' };
   }
 
-  if (response.ok) return { ok: true };
+  if (response.ok) {
+    const body = await response.json().catch(() => null);
+    return { ok: true, copySent: body?.copySent === true };
+  }
+
   if (response.status === 429) return { ok: false, reason: 'busy' };
   // 404/405 means the host has no endpoint at this path at all (a static
   // deployment, for instance), which is the same story as a missing key.

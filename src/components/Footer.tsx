@@ -9,6 +9,8 @@ const NAV_LINKS = [
   { href: '#contact', label: 'Contact' },
 ];
 
+const ADDRESS = ['600 1st Ave, Ste 330 PMB 92768', 'Seattle, WA 98104-2246'];
+
 export function Footer() {
   const year = new Date().getFullYear();
 
@@ -63,6 +65,15 @@ export function Footer() {
                 >
                   hello@bramwell.com
                 </a>
+              </li>
+              <li>
+                <address className="not-italic leading-[1.7] text-ivory/65">
+                  {ADDRESS.map((line) => (
+                    <span key={line} className="block">
+                      {line}
+                    </span>
+                  ))}
+                </address>
               </li>
               <li>
                 <a href="#contact" className="transition-colors duration-300 hover:text-brass">
