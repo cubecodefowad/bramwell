@@ -1,13 +1,22 @@
+import { useEffect, type ReactNode } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { About } from './components/About';
 import { Approach } from './components/Approach';
 import { Contact } from './components/Contact';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
 import { Hero } from './components/Hero';
 import { Intro } from './components/Intro';
+import { LegalLayout } from './components/LegalLayout';
 import { Nav } from './components/Nav';
 import { Services } from './components/Services';
+import { applyMeta, metaFor } from './lib/meta';
+import { usePathname } from './lib/router';
+import { NotFound } from './pages/NotFound';
+import { Privacy } from './pages/Privacy';
+import { Terms } from './pages/Terms';
 
-export default function App() {
+function Home() {
   return (
     <div className="min-h-screen bg-ivory">
       <a
@@ -30,5 +39,44 @@ export default function App() {
 
       <Footer />
     </div>
+  );
+}
+
+function page(pathname: string): ReactNode {
+  if (pathname === '/' || pathname === '') return <Home />;
+  if (pathname === '/privacy') {
+    return (
+      <LegalLayout>
+        <Privacy />
+      </LegalLayout>
+    );
+  }
+  if (pathname === '/terms') {
+    return (
+      <LegalLayout>
+        <Terms />
+      </LegalLayout>
+    );
+  }
+
+  return (
+    <LegalLayout>
+      <NotFound />
+    </LegalLayout>
+  );
+}
+
+export default function App() {
+  const pathname = usePathname();
+
+  useEffect(() => {
+    applyMeta(metaFor(pathname));
+  }, [pathname]);
+
+  return (
+    <>
+      <ErrorBoundary>{page(pathname)}</ErrorBoundary>
+      <Analytics />
+    </>
   );
 }

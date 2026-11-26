@@ -10,9 +10,11 @@ import {
   type SubmitFailure,
 } from '../lib/contact';
 import { Reveal } from './Reveal';
+import { Turnstile } from './Turnstile';
 
 const CONTACT_EMAIL = 'hello@bramwell.com';
 const ENDPOINT = import.meta.env.VITE_CONTACT_ENDPOINT || '/api/contact';
+const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY;
 
 type Status = 'idle' | 'sending' | 'sent' | 'error';
 
@@ -33,6 +35,10 @@ const FAILURE_COPY: Record<SubmitFailure, { title: string; body: string }> = {
     title: 'Too many messages from here just now',
     body: 'Give it a few minutes and send it again, or write to the address below and we will pick it up there.',
   },
+  challenge: {
+    title: 'The verification did not pass',
+    body: 'The bot check expired or was not completed. Send it again, or write to the address below and we will pick it up there.',
+  },
 };
 
 const fieldClass =
@@ -45,6 +51,8 @@ export function Contact() {
   const [failure, setFailure] = useState<SubmitFailure>('unconfigured');
   const [copySent, setCopySent] = useState(false);
   const [trap, setTrap] = useState('');
+  const [token, setToken] = useState('');
+  const [challengeKey, setChallengeKey] = useState(0);
 
   const update = (field: keyof Enquiry) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const next = { ...values, [field]: event.target.value };
@@ -76,8 +84,18 @@ export function Contact() {
       return;
     }
 
+    if (TURNSTILE_SITE_KEY && !token) {
+      setFailure('challenge');
+      setStatus('error');
+      return;
+    }
+
     setStatus('sending');
-    const result = await sendEnquiry(values, ENDPOINT);
+    const result = await sendEnquiry(values, ENDPOINT, token);
+
+    // Turnstile tokens are single-use: start a fresh widget for the next attempt.
+    setToken('');
+    setChallengeKey((value) => value + 1);
 
     if (result.ok) {
       setStatus('sent');
@@ -262,6 +280,13 @@ export function Contact() {
                   </p>
                 )}
               </div>
+
+              {TURNSTILE_SITE_KEY && (
+                <div className="sm:col-span-2">
+                  <Turnstile key={challengeKey} siteKey={TURNSTILE_SITE_KEY} onToken={setToken} />
+                  <p className="label mt-2 text-ivory/50">Protected by Cloudflare Turnstile</p>
+                </div>
+              )}
 
               <div aria-hidden="true" className="absolute left-[-9999px] h-0 w-0 overflow-hidden">
                 <label htmlFor="website">Website</label>

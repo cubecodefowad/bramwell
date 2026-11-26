@@ -3,11 +3,12 @@ import { ArrowUpRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { EASE } from '../lib/motion';
 
+/** Root-relative hashes so the same links work from the legal pages too. */
 const LINKS = [
-  { href: '#services', label: 'Services' },
-  { href: '#approach', label: 'Our Approach' },
-  { href: '#about', label: 'About' },
-  { href: '#contact', label: 'Contact' },
+  { href: '/#services', label: 'Services' },
+  { href: '/#approach', label: 'Our Approach' },
+  { href: '/#about', label: 'About' },
+  { href: '/#contact', label: 'Contact' },
 ];
 
 export function Nav() {
@@ -51,7 +52,7 @@ export function Nav() {
       ].join(' ')}
     >
       <div className="gutter relative z-10 flex h-[72px] items-center justify-between">
-        <a href="#top" className="flex items-baseline gap-3" aria-label="Bramwell — back to top">
+        <a href="/#top" className="flex items-baseline gap-3" aria-label="Bramwell — back to top">
           <span aria-hidden="true" className="mb-[3px] size-[6px] shrink-0 rotate-45 bg-brass" />
           <span className="font-display text-[1.55rem] leading-none tracking-[0.005em]">Bramwell</span>
           <span
@@ -75,7 +76,7 @@ export function Nav() {
             </a>
           ))}
           <a
-            href="#contact"
+            href="/#contact"
             className={[
               'label group inline-flex items-center gap-2 border px-5 py-2.5 transition-colors duration-300',
               dark
@@ -150,7 +151,7 @@ export function Nav() {
 
             <div className="space-y-5">
               <a
-                href="#contact"
+                href="/#contact"
                 onClick={() => setOpen(false)}
                 className="label flex w-full items-center justify-between border border-brass/60 px-5 py-4 text-brass"
               >

@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
+Disallow: /api/
 
-Sitemap: https://bramwell.com/sitemap.xml
+Sitemap: https://bramwell.top/sitemap.xml

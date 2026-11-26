@@ -1,12 +1,13 @@
 import { ArrowUp } from 'lucide-react';
+import { legalLinks } from '../data/legal';
 import { services } from '../data/services';
 
 const NAV_LINKS = [
-  { href: '#top', label: 'Home' },
-  { href: '#services', label: 'Services' },
-  { href: '#approach', label: 'Our Approach' },
-  { href: '#about', label: 'About' },
-  { href: '#contact', label: 'Contact' },
+  { href: '/#top', label: 'Home' },
+  { href: '/#services', label: 'Services' },
+  { href: '/#approach', label: 'Our Approach' },
+  { href: '/#about', label: 'About' },
+  { href: '/#contact', label: 'Contact' },
 ];
 
 const ADDRESS = ['600 1st Ave, Ste 330 PMB 92768', 'Seattle, WA 98104-2246'];
@@ -47,7 +48,7 @@ export function Footer() {
             <ul className="mt-5 space-y-3 text-[0.925rem]">
               {services.map((service) => (
                 <li key={service.number}>
-                  <a href="#services" className="transition-colors duration-300 hover:text-brass">
+                  <a href="/#services" className="transition-colors duration-300 hover:text-brass">
                     {service.title}
                   </a>
                 </li>
@@ -76,13 +77,13 @@ export function Footer() {
                 </address>
               </li>
               <li>
-                <a href="#contact" className="transition-colors duration-300 hover:text-brass">
+                <a href="/#contact" className="transition-colors duration-300 hover:text-brass">
                   Send an enquiry
                 </a>
               </li>
             </ul>
             <a
-              href="#top"
+              href="/#top"
               className="label mt-8 inline-flex items-center gap-2 text-ivory/60 transition-colors duration-300 hover:text-brass"
             >
               Back to top
@@ -91,8 +92,20 @@ export function Footer() {
           </div>
         </div>
 
-        <div className="mt-14 flex flex-col justify-between gap-4 border-t border-ivory/12 pt-6 sm:flex-row sm:items-center">
+        <div className="mt-14 flex flex-col justify-between gap-4 border-t border-ivory/12 pt-6 sm:flex-row sm:items-center sm:gap-8">
           <p className="label text-ivory/55">&copy; {year} Bramwell. All rights reserved.</p>
+          <ul className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            {legalLinks.map((link) => (
+              <li key={link.href}>
+                <a
+                  href={link.href}
+                  className="label text-ivory/55 transition-colors duration-300 hover:text-brass"
+                >
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
           <p className="label text-ivory/55">Digital Services &amp; Automation</p>
         </div>
       </div>

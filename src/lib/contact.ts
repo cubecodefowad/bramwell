@@ -8,7 +8,7 @@ export type Enquiry = {
 
 export type FieldErrors = Partial<Record<keyof Enquiry, string>>;
 
-export type SubmitFailure = 'unconfigured' | 'network' | 'rejected' | 'busy';
+export type SubmitFailure = 'unconfigured' | 'network' | 'rejected' | 'busy' | 'challenge';
 
 export type SubmitResult =
   | { ok: true; copySent: boolean }
@@ -54,7 +54,11 @@ export function validate(values: Enquiry): FieldErrors {
  * receipt reached the enquirer's address, so the page never promises one it
  * does not know about.
  */
-export async function sendEnquiry(values: Enquiry, endpoint: string | undefined): Promise<SubmitResult> {
+export async function sendEnquiry(
+  values: Enquiry,
+  endpoint: string | undefined,
+  turnstileToken?: string,
+): Promise<SubmitResult> {
   if (!endpoint) return { ok: false, reason: 'unconfigured' };
 
   let response: Response;
@@ -73,6 +77,7 @@ export async function sendEnquiry(values: Enquiry, endpoint: string | undefined)
         message: values.message.trim(),
         source: 'bramwell.com',
         submittedAt: new Date().toISOString(),
+        ...(turnstileToken ? { turnstileToken } : {}),
       }),
     });
   } catch {
@@ -89,6 +94,13 @@ export async function sendEnquiry(values: Enquiry, endpoint: string | undefined)
   // deployment, for instance), which is the same story as a missing key.
   if (response.status === 503 || response.status === 404 || response.status === 405) {
     return { ok: false, reason: 'unconfigured' };
+  }
+
+  // A failed bot check is told apart from a generic refusal so the copy can ask
+  // the visitor to try the challenge again rather than blaming the form.
+  if (response.status === 400) {
+    const body = await response.json().catch(() => null);
+    if (body?.error === 'challenge_failed') return { ok: false, reason: 'challenge' };
   }
 
   return { ok: false, reason: 'rejected' };

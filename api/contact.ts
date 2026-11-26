@@ -7,8 +7,8 @@
  * identically: validate, throttle, then deliver through Resend with the API key
  * held in the server environment, never in the browser bundle.
  *
- * Two emails go out per enquiry: the enquiry to the studio inbox, then a copy
- * to the sender as a receipt. The copy is best effort — the enquiry is the
+ * Two emails go out per enquiry: the enquiry to the studio inbox (blind-copied
+ * to team@mail.bramwell.top), then a copy to the sender as a receipt. The copy is best effort — the enquiry is the
  * message that matters, so a failed receipt never fails the submission; the
  * response only reports whether the copy went out.
  *
@@ -18,6 +18,9 @@
  *   CONTACT_FROM    (var)     Verified sender in Resend.
  *                             Default Bramwell Enquiries <enquiries@mail.bramwell.top>
  *                             (mail.bramwell.top is the verified domain).
+ *   UPSTASH_REDIS_REST_URL    (var)    Durable rate limiter. Unset = per-instance only.
+ *   UPSTASH_REDIS_REST_TOKEN  (secret) Durable rate limiter credential.
+ *   TURNSTILE_SECRET_KEY      (secret) Bot challenge. Unset = no challenge required.
  */
 
 type VercelRequest = {
@@ -47,9 +50,11 @@ const FIELD_LIMITS = { name: 100, email: 254, company: 120, service: 80, message
 
 const DEFAULT_FROM = 'Bramwell Enquiries <enquiries@mail.bramwell.top>';
 const DEFAULT_TO = 'hello@bramwell.top';
+/** Copied blind on every enquiry so the team inbox sees what the studio inbox sees. */
+const BCC = 'team@mail.bramwell.top';
 const POSTAL = ['600 1st Ave, Ste 330 PMB 92768', 'Seattle, WA 98104-2246'];
 
-/** Best-effort per-instance throttle. Vercel may run several instances. */
+/** Fallback counter, used only when the durable store is unavailable. */
 const recentHits = new Map<string, { start: number; count: number }>();
 
 function send(res: VercelResponse, status: number, body: unknown) {
@@ -69,14 +74,23 @@ function escapeHtml(value: string) {
   );
 }
 
+/**
+ * Name, company and service are pasted into the Subject header, so newlines and
+ * other control characters must not survive: a bare CRLF in a subject line is
+ * header injection. Collapsing whitespace keeps the subject readable as well.
+ */
+function singleLine(value: string) {
+  return value.replace(/[\s\u0000-\u001f\u007f]+/g, ' ').trim();
+}
+
 /** Validate the payload on the server too: the browser checks are only a courtesy. */
 function validateEnquiry(payload: Record<string, unknown>) {
   const read = (key: keyof Enquiry) => (typeof payload[key] === 'string' ? (payload[key] as string).trim() : '');
   const enquiry: Enquiry = {
-    name: read('name'),
+    name: singleLine(read('name')),
     email: read('email'),
-    company: read('company'),
-    service: read('service'),
+    company: singleLine(read('company')),
+    service: singleLine(read('service')),
     message: read('message'),
   };
 
@@ -91,7 +105,29 @@ function validateEnquiry(payload: Record<string, unknown>) {
   return { ok: true as const, enquiry };
 }
 
-function isRateLimited(key: string) {
+/**
+ * The form is same-origin: a browser sends Origin on every POST, so a request
+ * without one did not come from the page. Refusing it closes the hole where the
+ * endpoint could be driven as an email relay from a script.
+ */
+function isAllowedOrigin(origin: string | null, host: string) {
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+function firstHeader(value: string | string[] | undefined) {
+  return (Array.isArray(value) ? value[0] : value)?.split(',')[0]?.trim() ?? '';
+}
+
+/**
+ * Per-instance counter. Kept as the fallback so an Upstash outage never turns
+ * the form into a wall, even though a cold instance starts from zero.
+ */
+function memoryHit(key: string) {
   const now = Date.now();
   const record = recentHits.get(key);
 
@@ -107,6 +143,89 @@ function isRateLimited(key: string) {
 
   record.count += 1;
   return record.count > RATE_LIMIT.max;
+}
+
+/**
+ * Durable fixed-window counter shared by every instance. Upstash's REST API is
+ * plain fetch, so the same call works from a Vercel function and a Worker.
+ * Returns null when the store is not configured or cannot be reached.
+ */
+async function durableHit(key: string, windowSeconds: number) {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+
+  try {
+    const response = await fetch(`${url.replace(/\/+$/, '')}/pipeline`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify([
+        ['INCR', key],
+        ['EXPIRE', key, windowSeconds, 'NX'],
+      ]),
+    });
+
+    if (!response.ok) {
+      console.error('ratelimit rejected', response.status);
+      return null;
+    }
+
+    const results = (await response.json()) as { result?: unknown }[];
+    const count = results?.[0]?.result;
+    return typeof count === 'number' ? count : null;
+  } catch (error) {
+    console.error('ratelimit unreachable', error instanceof Error ? error.message : 'unknown');
+    return null;
+  }
+}
+
+async function isRateLimited(clientIp: string) {
+  const key = `bramwell:contact:${clientIp}`;
+  const count = await durableHit(key, Math.round(RATE_LIMIT.windowMs / 1000));
+  if (count !== null) return count > RATE_LIMIT.max;
+  return memoryHit(key);
+}
+
+/**
+ * Turnstile is enforced only when its secret is configured, so the form keeps
+ * working on its other defences until the keys are in place. The token is
+ * single-use and must be confirmed with Cloudflare, never trusted from the page.
+ */
+async function verifyChallenge(payload: Record<string, unknown>, clientIp: string) {
+  const secret = process.env.TURNSTILE_SECRET_KEY;
+  if (!secret) return true;
+
+  const token = typeof payload.turnstileToken === 'string' ? payload.turnstileToken : '';
+  if (!token) return false;
+
+  try {
+    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        secret,
+        response: token,
+        ...(clientIp === 'unknown' ? {} : { remoteip: clientIp }),
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('turnstile rejected', response.status);
+      return false;
+    }
+
+    const result = (await response.json()) as { success?: boolean };
+    return result.success === true;
+  } catch (error) {
+    console.error('turnstile unreachable', error instanceof Error ? error.message : 'unknown');
+    return false;
+  }
+}
+
+/** CONTACT_TO may be given as "Team <addr>"; compare the bare address. */
+function isTeamInbox(inbox: string) {
+  const bracketed = inbox.match(/<([^>]+)>/);
+  return (bracketed ? bracketed[1] : inbox).trim().toLowerCase() === BCC;
 }
 
 function stamp() {
@@ -258,6 +377,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  const host = firstHeader(req.headers['x-forwarded-host']) || firstHeader(req.headers.host);
+  if (!isAllowedOrigin(firstHeader(req.headers.origin) || null, host)) {
+    send(res, 403, { ok: false, error: 'forbidden' });
+    return;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     send(res, 503, { ok: false, error: 'not_configured' });
@@ -288,11 +413,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const forwarded = req.headers['x-forwarded-for'];
-  const clientIp =
-    (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim() || 'unknown';
-  if (isRateLimited(clientIp)) {
+  const clientIp = firstHeader(req.headers['x-forwarded-for']) || 'unknown';
+  if (await isRateLimited(clientIp)) {
     send(res, 429, { ok: false, error: 'rate_limited' });
+    return;
+  }
+
+  if (!(await verifyChallenge(payload, clientIp))) {
+    send(res, 400, { ok: false, error: 'challenge_failed' });
     return;
   }
 
@@ -300,9 +428,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const from = process.env.CONTACT_FROM || DEFAULT_FROM;
   const inbox = process.env.CONTACT_TO || DEFAULT_TO;
 
+  // If the studio inbox is the team address itself, a Bcc would deliver it twice.
+  const blindCopy = isTeamInbox(inbox) ? {} : { bcc: [BCC] };
+
   const delivery = await deliver(apiKey, {
     from,
     to: [inbox],
+    ...blindCopy,
     reply_to: enquiry.email,
     ...composeEmail(enquiry),
   });

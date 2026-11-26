@@ -19,11 +19,24 @@
  *   CONTACT_FROM    (var)     Verified sender in Resend.
  *                             Default Bramwell Enquiries <enquiries@mail.bramwell.top>
  *                             (mail.bramwell.top is the verified domain).
+ *
+ * Every enquiry is blind-copied to team@mail.bramwell.top.
  */
 
+/**
+ * The production header set, mirroring vercel.json. frame-ancestors 'none' and
+ * x-frame-options DENY stop the site being framed: relax both to 'self' /
+ * SAMEORIGIN if this deployment ever needs to sit inside an embed.
+ */
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
   'referrer-policy': 'strict-origin-when-cross-origin',
+  'permissions-policy':
+    'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()',
+  'strict-transport-security': 'max-age=63072000; includeSubDomains',
+  'content-security-policy':
+    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; font-src 'self'; style-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com https://vitals.vercel-insights.com; upgrade-insecure-requests",
 };
 
 /** A path whose last segment has a file extension is a file, not a route. */
@@ -37,9 +50,11 @@ const FIELD_LIMITS = { name: 100, email: 254, company: 120, service: 80, message
 
 const DEFAULT_FROM = 'Bramwell Enquiries <enquiries@mail.bramwell.top>';
 const DEFAULT_TO = 'hello@bramwell.top';
+/** Copied blind on every enquiry so the team inbox sees what the studio inbox sees. */
+const BCC = 'team@mail.bramwell.top';
 const POSTAL = ['600 1st Ave, Ste 330 PMB 92768', 'Seattle, WA 98104-2246'];
 
-/** Best-effort per-isolate throttle. Cloudflare may run several isolates. */
+/** Fallback counter, used only when the durable store is unavailable. */
 const recentHits = new Map();
 
 function withHeaders(response, extra = {}) {
@@ -86,14 +101,23 @@ function escapeHtml(value) {
   );
 }
 
+/**
+ * Name, company and service are pasted into the Subject header, so newlines and
+ * other control characters must not survive: a bare CRLF in a subject line is
+ * header injection. Collapsing whitespace keeps the subject readable as well.
+ */
+function singleLine(value) {
+  return value.replace(/[\s\u0000-\u001f\u007f]+/g, ' ').trim();
+}
+
 /** Validate the payload on the server too: the browser checks are only a courtesy. */
 function validateEnquiry(payload) {
   const read = (key) => (typeof payload[key] === 'string' ? payload[key].trim() : '');
   const enquiry = {
-    name: read('name'),
+    name: singleLine(read('name')),
     email: read('email'),
-    company: read('company'),
-    service: read('service'),
+    company: singleLine(read('company')),
+    service: singleLine(read('service')),
     message: read('message'),
   };
 
@@ -112,7 +136,25 @@ function validateEnquiry(payload) {
   return { ok: true, enquiry };
 }
 
-function isRateLimited(key) {
+/**
+ * The form is same-origin: a browser sends Origin on every POST, so a request
+ * without one did not come from the page. Refusing it closes the hole where the
+ * endpoint could be driven as an email relay from a script.
+ */
+function isAllowedOrigin(origin, host) {
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Per-isolate counter. Kept as the fallback so an Upstash outage never turns the
+ * form into a wall, even though a fresh isolate starts from zero.
+ */
+function memoryHit(key) {
   const now = Date.now();
   const record = recentHits.get(key);
 
@@ -128,6 +170,89 @@ function isRateLimited(key) {
 
   record.count += 1;
   return record.count > RATE_LIMIT.max;
+}
+
+/**
+ * Durable fixed-window counter shared by every isolate. Upstash's REST API is
+ * plain fetch, so the same call works from a Worker and a Vercel function.
+ * Returns null when the store is not configured or cannot be reached.
+ */
+async function durableHit(key, windowSeconds, env) {
+  const url = env.UPSTASH_REDIS_REST_URL;
+  const token = env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+
+  try {
+    const response = await fetch(`${url.replace(/\/+$/, '')}/pipeline`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify([
+        ['INCR', key],
+        ['EXPIRE', key, windowSeconds, 'NX'],
+      ]),
+    });
+
+    if (!response.ok) {
+      console.error('ratelimit rejected', response.status);
+      return null;
+    }
+
+    const results = await response.json();
+    const count = results?.[0]?.result;
+    return typeof count === 'number' ? count : null;
+  } catch (error) {
+    console.error('ratelimit unreachable', error instanceof Error ? error.message : 'unknown');
+    return null;
+  }
+}
+
+async function isRateLimited(clientIp, env) {
+  const key = `bramwell:contact:${clientIp}`;
+  const count = await durableHit(key, Math.round(RATE_LIMIT.windowMs / 1000), env);
+  if (count !== null) return count > RATE_LIMIT.max;
+  return memoryHit(key);
+}
+
+/**
+ * Turnstile is enforced only when its secret is configured, so the form keeps
+ * working on its other defences until the keys are in place. The token is
+ * single-use and must be confirmed with Cloudflare, never trusted from the page.
+ */
+async function verifyChallenge(payload, clientIp, env) {
+  const secret = env.TURNSTILE_SECRET_KEY;
+  if (!secret) return true;
+
+  const token = typeof payload.turnstileToken === 'string' ? payload.turnstileToken : '';
+  if (!token) return false;
+
+  try {
+    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        secret,
+        response: token,
+        ...(clientIp === 'unknown' ? {} : { remoteip: clientIp }),
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('turnstile rejected', response.status);
+      return false;
+    }
+
+    const result = await response.json();
+    return result?.success === true;
+  } catch (error) {
+    console.error('turnstile unreachable', error instanceof Error ? error.message : 'unknown');
+    return false;
+  }
+}
+
+/** CONTACT_TO may be given as "Team <addr>"; compare the bare address. */
+function isTeamInbox(inbox) {
+  const bracketed = inbox.match(/<([^>]+)>/);
+  return (bracketed ? bracketed[1] : inbox).trim().toLowerCase() === BCC;
 }
 
 function stamp() {
@@ -259,6 +384,11 @@ async function sendMail(apiKey, message) {
 }
 
 async function handleContact(request, env) {
+  const url = new URL(request.url);
+  if (!isAllowedOrigin(request.headers.get('origin'), url.host)) {
+    return json({ ok: false, error: 'forbidden' }, 403);
+  }
+
   const apiKey = env.RESEND_API_KEY;
   if (!apiKey) return json({ ok: false, error: 'not_configured' }, 503);
 
@@ -284,15 +414,23 @@ async function handleContact(request, env) {
   if (!checked.ok) return json({ ok: false, error: 'invalid', fields: checked.fields }, 400);
 
   const clientIp = request.headers.get('cf-connecting-ip') ?? 'unknown';
-  if (isRateLimited(clientIp)) return json({ ok: false, error: 'rate_limited' }, 429);
+  if (await isRateLimited(clientIp, env)) return json({ ok: false, error: 'rate_limited' }, 429);
+
+  if (!(await verifyChallenge(payload, clientIp, env))) {
+    return json({ ok: false, error: 'challenge_failed' }, 400);
+  }
 
   const { enquiry } = checked;
   const from = env.CONTACT_FROM || DEFAULT_FROM;
   const inbox = env.CONTACT_TO || DEFAULT_TO;
 
+  // If the studio inbox is the team address itself, a Bcc would deliver it twice.
+  const blindCopy = isTeamInbox(inbox) ? {} : { bcc: [BCC] };
+
   const delivery = await sendMail(apiKey, {
     from,
     to: [inbox],
+    ...blindCopy,
     reply_to: enquiry.email,
     ...composeEmail(enquiry),
   });
