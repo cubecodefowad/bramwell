@@ -43,6 +43,7 @@ export function Contact() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [status, setStatus] = useState<Status>('idle');
   const [failure, setFailure] = useState<SubmitFailure>('unconfigured');
+  const [copySent, setCopySent] = useState(false);
   const [trap, setTrap] = useState('');
 
   const update = (field: keyof Enquiry) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -80,6 +81,7 @@ export function Contact() {
 
     if (result.ok) {
       setStatus('sent');
+      setCopySent(result.copySent);
       setValues(emptyEnquiry);
       return;
     }
@@ -294,7 +296,8 @@ export function Contact() {
                 <div className="border border-brass/50 bg-forest-deep p-5">
                   <p className="font-display text-[1.3rem] text-ivory">Thank you &mdash; that has reached us.</p>
                   <p className="mt-2 text-[0.9rem] leading-relaxed text-ivory/70">
-                    We&rsquo;ll come back to you within two working days. If it is urgent, write to{' '}
+                    We&rsquo;ll come back to you within two working days.
+                    {copySent && ' A copy of your enquiry is on its way to your inbox.'} If it is urgent, write to{' '}
                     <a href={`mailto:${CONTACT_EMAIL}`} className="text-brass underline underline-offset-4">
                       {CONTACT_EMAIL}
                     </a>
