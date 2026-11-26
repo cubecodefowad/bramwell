@@ -10,7 +10,7 @@
  * Environment (Vercel -> Settings -> Environment Variables):
  *   RESEND_API_KEY  (secret)  Resend API key. Required for delivery.
  *   CONTACT_TO      (var)     Inbox that receives enquiries. Default hello@bramwell.com
- *   CONTACT_FROM    (var)     Verified sender. Default Resend's onboarding sender.
+ *   CONTACT_FROM    (var)     Verified sender. Default Bramwell Enquiries <enquiries@bramwell.top>
  */
 
 type VercelRequest = {
@@ -156,6 +156,9 @@ function parseBody(body: unknown): Record<string, unknown> | null {
   return null;
 }
 
+const DEFAULT_FROM = 'Bramwell Enquiries <enquiries@bramwell.top>';
+const DEFAULT_TO = 'hello@bramwell.com';
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     res.setHeader('allow', 'POST');
@@ -215,8 +218,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.CONTACT_FROM || 'Bramwell Enquiries <onboarding@resend.dev>',
-        to: [process.env.CONTACT_TO || 'hello@bramwell.com'],
+        from: process.env.CONTACT_FROM || DEFAULT_FROM,
+        to: [process.env.CONTACT_TO || DEFAULT_TO],
         reply_to: enquiry.email,
         subject,
         text,
@@ -229,11 +232,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!delivery.ok) {
-    // Log Resend's own explanation (it never contains the key) and tell the
-    // client only the upstream status, so nothing about the account leaks.
+    // TEMPORARY diagnostic: Resend's own explanation, so the sender/recipient
+    // combination can be corrected. Remove once delivery is confirmed.
     const detail = await delivery.text().catch(() => '');
     console.error('resend rejected', delivery.status, detail.slice(0, 500));
-    send(res, 502, { ok: false, error: 'delivery_failed', upstream: delivery.status });
+    send(res, 502, { ok: false, error: 'delivery_failed', upstream: delivery.status, detail: detail.slice(0, 300) });
     return;
   }
 
