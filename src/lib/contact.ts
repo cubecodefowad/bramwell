@@ -8,7 +8,7 @@ export type Enquiry = {
 
 export type FieldErrors = Partial<Record<keyof Enquiry, string>>;
 
-export type SubmitFailure = 'unconfigured' | 'network' | 'rejected';
+export type SubmitFailure = 'unconfigured' | 'network' | 'rejected' | 'busy';
 
 export type SubmitResult = { ok: true } | { ok: false; reason: SubmitFailure };
 
@@ -45,11 +45,17 @@ export function validate(values: Enquiry): FieldErrors {
   return errors;
 }
 
+/**
+ * Post the enquiry to the endpoint and report what actually happened.
+ * The endpoint answers with JSON, so a refusal can be told apart from a
+ * dropped connection or an unconfigured backend.
+ */
 export async function sendEnquiry(values: Enquiry, endpoint: string | undefined): Promise<SubmitResult> {
   if (!endpoint) return { ok: false, reason: 'unconfigured' };
 
+  let response: Response;
   try {
-    const response = await fetch(endpoint, {
+    response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -65,10 +71,13 @@ export async function sendEnquiry(values: Enquiry, endpoint: string | undefined)
         submittedAt: new Date().toISOString(),
       }),
     });
-
-    if (!response.ok) return { ok: false, reason: 'rejected' };
-    return { ok: true };
   } catch {
     return { ok: false, reason: 'network' };
   }
+
+  if (response.ok) return { ok: true };
+  if (response.status === 429) return { ok: false, reason: 'busy' };
+  if (response.status === 503) return { ok: false, reason: 'unconfigured' };
+
+  return { ok: false, reason: 'rejected' };
 }
