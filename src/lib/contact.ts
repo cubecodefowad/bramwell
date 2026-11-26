@@ -77,7 +77,11 @@ export async function sendEnquiry(values: Enquiry, endpoint: string | undefined)
 
   if (response.ok) return { ok: true };
   if (response.status === 429) return { ok: false, reason: 'busy' };
-  if (response.status === 503) return { ok: false, reason: 'unconfigured' };
+  // 404/405 means the host has no endpoint at this path at all (a static
+  // deployment, for instance), which is the same story as a missing key.
+  if (response.status === 503 || response.status === 404 || response.status === 405) {
+    return { ok: false, reason: 'unconfigured' };
+  }
 
   return { ok: false, reason: 'rejected' };
 }
