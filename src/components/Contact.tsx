@@ -12,7 +12,7 @@ import {
 import { Reveal } from './Reveal';
 
 const CONTACT_EMAIL = 'hello@bramwell.com';
-const ENDPOINT = import.meta.env.VITE_CONTACT_ENDPOINT;
+const ENDPOINT = import.meta.env.VITE_CONTACT_ENDPOINT || '/api/contact';
 
 type Status = 'idle' | 'sending' | 'sent' | 'error';
 
@@ -28,6 +28,10 @@ const FAILURE_COPY: Record<SubmitFailure, { title: string; body: string }> = {
   rejected: {
     title: 'The form service refused the message',
     body: 'Something on the receiving side blocked it. Email is the reliable route today.',
+  },
+  busy: {
+    title: 'Too many messages from here just now',
+    body: 'Give it a few minutes and send it again, or write to the address below and we will pick it up there.',
   },
 };
 
