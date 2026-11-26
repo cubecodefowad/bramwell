@@ -7,11 +7,12 @@
  * identically: validate, throttle, then deliver through Resend with the API key
  * held in the server environment, never in the browser bundle.
  *
- * Environment (Vercel -> Settings -> Environment Variables):
+ * Environment (Vercel -> Settings -> Environment Variables), all optional:
  *   RESEND_API_KEY  (secret)  Resend API key. Required for delivery.
- *   CONTACT_TO      (var)     Inbox that receives enquiries. Default hello@bramwell.com
- *   CONTACT_FROM    (var)     Verified sender. Default Resend's onboarding sender,
- *                             which only delivers to the Resend account owner.
+ *   CONTACT_TO      (var)     Inbox that receives enquiries. Default hello@bramwell.top
+ *   CONTACT_FROM    (var)     Verified sender in Resend.
+ *                             Default Bramwell Enquiries <enquiries@mail.bramwell.top>
+ *                             (mail.bramwell.top is the verified domain).
  */
 
 type VercelRequest = {
@@ -38,6 +39,9 @@ const MAX_BODY_BYTES = 16 * 1024;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const RATE_LIMIT = { windowMs: 10 * 60 * 1000, max: 5 };
 const FIELD_LIMITS = { name: 100, email: 254, company: 120, service: 80, message: 2000 };
+
+const DEFAULT_FROM = 'Bramwell Enquiries <enquiries@mail.bramwell.top>';
+const DEFAULT_TO = 'hello@bramwell.top';
 
 /** Best-effort per-instance throttle. Vercel may run several instances. */
 const recentHits = new Map<string, { start: number; count: number }>();
@@ -216,8 +220,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.CONTACT_FROM || 'Bramwell Enquiries <onboarding@resend.dev>',
-        to: [process.env.CONTACT_TO || 'hello@bramwell.com'],
+        from: process.env.CONTACT_FROM || DEFAULT_FROM,
+        to: [process.env.CONTACT_TO || DEFAULT_TO],
         reply_to: enquiry.email,
         subject,
         text,
@@ -230,11 +234,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!delivery.ok) {
-    // Log Resend's own explanation (it never contains the key) and give the
-    // client an opaque failure, so nothing about the account leaks to a prober.
+    // Log Resend's own explanation (it never contains the key) and tell the
+    // client only the upstream status, so nothing about the account leaks.
     const detail = await delivery.text().catch(() => '');
     console.error('resend rejected', delivery.status, detail.slice(0, 500));
-    send(res, 502, { ok: false, error: 'delivery_failed' });
+    send(res, 502, { ok: false, error: 'delivery_failed', upstream: delivery.status });
     return;
   }
 
