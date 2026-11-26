@@ -229,11 +229,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!delivery.ok) {
-    // Log Resend's own explanation (it never contains the key) and give the
-    // client an opaque failure, so nothing about the account leaks to a prober.
+    // Log Resend's own explanation (it never contains the key) and tell the
+    // client only the upstream status, so nothing about the account leaks.
     const detail = await delivery.text().catch(() => '');
     console.error('resend rejected', delivery.status, detail.slice(0, 500));
-    send(res, 502, { ok: false, error: 'delivery_failed' });
+    send(res, 502, { ok: false, error: 'delivery_failed', upstream: delivery.status });
     return;
   }
 
